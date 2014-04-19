@@ -1,12 +1,12 @@
 (ns cam-clj.mazes.core
   (:require-macros [cljs.core.async.macros :refer [go]])
   (:require [monet.canvas :as canvas]
-            [cljs.core.async :refer [put! chan <! timeout close!]]))
+            [cljs.core.async :refer [<! timeout]]))
 
 (enable-console-print!)
 
 (def margin 8)
-(def cell-size 8)
+(def cell-size 12)
 (def wall-thickness 4)
 
 (defn top-left
@@ -75,28 +75,23 @@
       (canvas/fill-style ctx "#FFFFFF")
       (let [starting-cell [(rand-int nrows) (rand-int ncols)]]
         (add-cell-to-canvas ctx starting-cell)
-        (go (loop [cells #{starting-cell} walls (into #{} (cell-walls nrows ncols starting-cell))]
-              (<! (timeout 1))
-              (when (not-empty walls)
-                (let [wall (rand-nth (vec walls))
-                       [cell1 cell2] (vec wall)]
-                   (if (cells cell1)
-                     (if (cells cell2)
-                       (recur cells (disj walls wall))
-                       (do
-                         (add-cell-to-canvas ctx cell2)
-                         (remove-wall-from-canvas ctx cell1 cell2)
-                         (recur (conj cells cell2)
-                                (into (disj walls wall) (cell-walls nrows ncols cell2)))))
-                     (do
-                       (add-cell-to-canvas ctx cell1)
-                       (remove-wall-from-canvas ctx cell1 cell2)
-                       (recur (conj cells cell1)
-                              (into (disj walls wall) (cell-walls nrows ncols cell1))))))))))
+        (go
+         (loop [cells #{starting-cell} walls (into #{} (cell-walls nrows ncols starting-cell))]
+           (<! (timeout 1))
+           (when (not-empty walls)
+             (let [wall          (rand-nth (vec walls))
+                   [cell1 cell2] (vec wall)]
+                (if (and (cells cell1) (cells cell2))
+                  (recur cells (disj walls wall))
+                  (let [[cell new-cell] (if (cells cell1) [cell1 cell2] [cell2 cell1])]
+                      (add-cell-to-canvas ctx new-cell)
+                      (remove-wall-from-canvas ctx cell new-cell)
+                      (recur (conj cells new-cell)
+                             (into (disj walls wall) (cell-walls nrows ncols new-cell))))))))))
       ctx)))
 
 (def dom-canvas (.getElementById js/document "maze-canvas"))
 
-(def ctx (random-prim dom-canvas 50 80))
+(def ctx (random-prim dom-canvas 40 40))
 
 
