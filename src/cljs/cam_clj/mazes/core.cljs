@@ -1,53 +1,102 @@
 (ns cam-clj.mazes.core
-  (:require [cam-clj.mazes.common :as common]
-            [cam-clj.mazes.generate.drunken-walk :refer [drunken-walk]]
-            [cam-clj.mazes.draw :refer [draw-maze]]))
+  (:require-macros [cljs.core.async.macros :refer [go]])
+  (:require [monet.canvas :as canvas]
+            [cljs.core.async :refer [put! chan <! timeout close!]]))
 
 (enable-console-print!)
 
+(def margin 8)
+(def cell-size 8)
+(def wall-thickness 4)
+
+(defn top-left
+  [[row col]]
+  [(+ margin (* col cell-size))
+   (+ margin (* row cell-size))])
+
+(def direction->delta {:north [-1 0] :east [0 1] :south [1 0] :west [0 -1]})
+
+(defn adjacent-cells
+  [nrows ncols [row col]]
+  (for [[delta-row delta-col] (vals direction->delta)
+        :let [row' (+ row delta-row)
+              col' (+ col delta-col)]
+        :when (and (< -1 row' nrows)
+                   (< -1 col' ncols))]
+    [row' col']))
+
+(defn cell-walls
+  [nrows ncols cell]
+  (map (fn [neighbour] #{cell neighbour}) (adjacent-cells nrows ncols cell)))
+
+(defn add-cell-to-canvas
+  [ctx cell]
+  (let [[x y] (top-left cell)]
+    (canvas/fill-rect ctx {:x (+ x wall-thickness)
+                           :y (+ y wall-thickness)
+                           :h (- cell-size wall-thickness)
+                           :w (- cell-size wall-thickness)})))
+
+(defn remove-east-wall-from-canvas
+  [ctx cell]
+  (let [[x y] (top-left cell)]
+    (canvas/fill-rect ctx {:x (+ x cell-size)
+                           :y (+ y wall-thickness)
+                           :h (- cell-size wall-thickness)
+                           :w wall-thickness})))
+
+(defn remove-south-wall-from-canvas
+  [ctx cell]
+  (let [[x y] (top-left cell)]
+    (canvas/fill-rect ctx {:x (+ x wall-thickness)
+                           :y (+ y cell-size)
+                           :h wall-thickness
+                           :w (- cell-size wall-thickness)})))
+
+(defn remove-wall-from-canvas
+  [ctx [r1 c1] [r2 c2]]
+  (if (= r1 r2)
+    (if (< c1 c2)
+      (remove-east-wall-from-canvas ctx [r1 c1])
+      (remove-east-wall-from-canvas ctx [r2 c2]))
+    (if (< r1 r2)
+      (remove-south-wall-from-canvas ctx [r1 c1])
+      (remove-south-wall-from-canvas ctx [r2 c2]))))
+
+(defn random-prim
+  [dom-canvas nrows ncols]
+  (let [h (+ (* nrows cell-size) wall-thickness)
+        w (+ (* ncols cell-size) wall-thickness)]
+    (set! (.-width dom-canvas) (+ (* 2 margin) w))
+    (set! (.-height dom-canvas) (+ (* 2 margin) h))
+    (let [ctx (canvas/get-context dom-canvas "2d")]
+      (canvas/fill-style ctx "#000000")
+      (canvas/fill-rect ctx {:x margin :y margin :h h :w w})
+      (canvas/fill-style ctx "#FFFFFF")
+      (let [starting-cell [(rand-int nrows) (rand-int ncols)]]
+        (add-cell-to-canvas ctx starting-cell)
+        (go (loop [cells #{starting-cell} walls (into #{} (cell-walls nrows ncols starting-cell))]
+              (<! (timeout 1))
+              (when (not-empty walls)
+                (let [wall (rand-nth (vec walls))
+                       [cell1 cell2] (vec wall)]
+                   (if (cells cell1)
+                     (if (cells cell2)
+                       (recur cells (disj walls wall))
+                       (do
+                         (add-cell-to-canvas ctx cell2)
+                         (remove-wall-from-canvas ctx cell1 cell2)
+                         (recur (conj cells cell2)
+                                (into (disj walls wall) (cell-walls nrows ncols cell2)))))
+                     (do
+                       (add-cell-to-canvas ctx cell1)
+                       (remove-wall-from-canvas ctx cell1 cell2)
+                       (recur (conj cells cell1)
+                              (into (disj walls wall) (cell-walls nrows ncols cell1))))))))))
+      ctx)))
+
 (def dom-canvas (.getElementById js/document "maze-canvas"))
 
-(defrecord NeighbourMapMaze [cells]
-  cam-clj.mazes.common/AMaze
-  (num-rows [_] (count cells))
-  (num-cols [_] (count (first cells)))
-  (neighbours [_ row col] (get-in cells [row col])))
-
-;; +-+---+
-;; | |   |
-;; | | | |
-;; |   | |
-;; +---+-+
-
-(def maze1 (->NeighbourMapMaze [[[[1,0]]       [[0,2] [1,1]] [[0,1] [1,2]]]
-                                [[[0,0] [2,0]] [[0,1] [2,1]] [[0,2] [2,2]]]
-                                [[[1,0] [2,1]] [[2,0] [1,1]] [[1,2]]]]))
+(def ctx (random-prim dom-canvas 50 80))
 
 
-(common/num-rows maze1)
-
-;; (draw-maze dom-canvas maze1)
-
-(defrecord WallMapMaze [cells]
-  cam-clj.mazes.common/AMaze
-  (num-rows [_] (count cells))
-  (num-cols [_] (count (first cells)))
-  (neighbours
-   [_ row col]
-   (let [wall? (set (get-in cells [row col]))]
-     (mapv (fn [direction]
-             (let [[delta-row delta-col] (common/delta direction)]
-               [(+ row delta-row) (+ col delta-col)]))
-       (filter (complement wall?) (keys common/delta))))))
-
-(def maze2 (->WallMapMaze [[[:north :east :west] [:north :west] [:north :east]]
-                           [[:east :west]        [:east :west]  [:east :west]]
-                           [[:south :west]       [:south :east] [:south :east :west]]]))
-
-(common/neighbours maze2 0 1)
-
-;;(draw-maze dom-canvas maze2)
-
-;;(def maze3 (->WallMapMaze (drunken-walk 20 20)))
-
-;;(draw-maze dom-canvas maze3)
