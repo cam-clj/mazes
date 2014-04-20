@@ -15,3 +15,4 @@ goog.addDependency("../cam_clj/mazes/common.js", ['cam_clj.mazes.common'], ['clj
 goog.addDependency("../cam_clj/mazes/generate/drunken_walk.js", ['cam_clj.mazes.generate.drunken_walk'], ['cljs.core', 'cam_clj.mazes.common']);
 goog.addDependency("../cam_clj/mazes/draw.js", ['cam_clj.mazes.draw'], ['cljs.core', 'cam_clj.mazes.common', 'monet.canvas']);
 goog.addDependency("../cam_clj/mazes/demo.js", ['cam_clj.mazes.demo'], ['cljs.core', 'cam_clj.mazes.generate.drunken_walk', 'cam_clj.mazes.common', 'cam_clj.mazes.draw']);
+goog.addDependency("../cam_clj/mazes/cellular_automata.js", ['cam_clj.mazes.cellular_automata'], ['cljs.core', 'monet.canvas', 'cljs.core.async']);
