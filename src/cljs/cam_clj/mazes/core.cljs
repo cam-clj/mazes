@@ -1,97 +1,66 @@
 (ns cam-clj.mazes.core
   (:require-macros [cljs.core.async.macros :refer [go]])
-  (:require [monet.canvas :as canvas]
-            [cljs.core.async :refer [<! timeout]]))
+  (:require [cljs.core.async :refer [chan put! <!]]
+            [monet.canvas :as canvas]
+            [om.core :as om]
+            [om.dom :as dom]))
 
-(enable-console-print!)
+(def app-state (atom {:nrows 10 :ncols 10 :cell-size 16 :margin 4 :wall-thickness 2}))
 
-(def margin 8)
-(def cell-size 12)
-(def wall-thickness 4)
+(defn placeholder
+  [{:keys [nrows ncols cell-size margin wall-thickness] :as app} owner]
+  (reify
+    om/IInitState
+    (init-state
+     [_]
+     {:ch (chan)})
+    om/IDidMount
+    (did-mount
+     [_]
+     (let [dom-canvas (om/get-node owner "canvas")
+           mc         (canvas/init dom-canvas "2d")
+           ch         (om/get-state owner [:ch])]
+       (canvas/add-entity mc :border (canvas/entity
+                                      {:x margin :y margin :h (* nrows cell-size) :w (* ncols cell-size)}
+                                      nil
+                                      (fn [ctx border]
+                                        (-> ctx
+                                            (canvas/stroke-style "#000000")
+                                            (canvas/stroke-rect border)))))
+       (canvas/add-entity mc :walker (canvas/entity
+                                      {:row 0 :col 0}
+                                      (fn [{:keys [row col]}]
+                                        (let [[delta-row delta-col] (rand-nth [[0 1] [0 -1] [1 0] [-1 0]])]
+                                          {:row (mod (+ row delta-row) nrows)
+                                           :col (mod (+ col delta-col) ncols)}))
+                                      (fn [ctx {:keys [row col]}]
+                                        (-> ctx
+                                            (canvas/fill-style "red")
+                                            (canvas/fill-rect {:x (+ margin (* col cell-size))
+                                                               :y (+ margin (* row cell-size))
+                                                               :h cell-size
+                                                               :w cell-size})))))
+       (go (loop []
+             (when-let [action (<! ch)]
+               (case action
+                 :stop (canvas/stop mc)
+                 :restart (canvas/restart mc)
+                 :stop-updating (canvas/stop-updating mc)
+                 :start-updating (canvas/start-updating mc))
+               (recur))))))
+    om/IRenderState
+    (render-state
+     [_ {:keys [ch]}]
+     (dom/div nil
+              (dom/canvas #js {:height (+ (* 2 margin) (* nrows cell-size))
+                               :width  (+ (* 2 margin) (* ncols cell-size))
+                               :ref "canvas"})
+              (dom/button #js {:onClick (fn [_] (put! ch :stop))} "Stop")
+              (dom/button #js {:onClick (fn [_] (put! ch :restart))} "Restart")
+              (dom/button #js {:onClick (fn [_] (put! ch :stop-updating))} "Stop Updating")
+              (dom/button #js {:onClick (fn [_] (put! ch :start-updating))} "Start Updating")))))
 
-(defn top-left
-  [[row col]]
-  [(+ margin (* col cell-size))
-   (+ margin (* row cell-size))])
-
-(def direction->delta {:north [-1 0] :east [0 1] :south [1 0] :west [0 -1]})
-
-(defn adjacent-cells
-  [nrows ncols [row col]]
-  (for [[delta-row delta-col] (vals direction->delta)
-        :let [row' (+ row delta-row)
-              col' (+ col delta-col)]
-        :when (and (< -1 row' nrows)
-                   (< -1 col' ncols))]
-    [row' col']))
-
-(defn cell-walls
-  [nrows ncols cell]
-  (map (fn [neighbour] #{cell neighbour}) (adjacent-cells nrows ncols cell)))
-
-(defn add-cell-to-canvas
-  [ctx cell]
-  (let [[x y] (top-left cell)]
-    (canvas/fill-rect ctx {:x (+ x wall-thickness)
-                           :y (+ y wall-thickness)
-                           :h (- cell-size wall-thickness)
-                           :w (- cell-size wall-thickness)})))
-
-(defn remove-east-wall-from-canvas
-  [ctx cell]
-  (let [[x y] (top-left cell)]
-    (canvas/fill-rect ctx {:x (+ x cell-size)
-                           :y (+ y wall-thickness)
-                           :h (- cell-size wall-thickness)
-                           :w wall-thickness})))
-
-(defn remove-south-wall-from-canvas
-  [ctx cell]
-  (let [[x y] (top-left cell)]
-    (canvas/fill-rect ctx {:x (+ x wall-thickness)
-                           :y (+ y cell-size)
-                           :h wall-thickness
-                           :w (- cell-size wall-thickness)})))
-
-(defn remove-wall-from-canvas
-  [ctx [r1 c1] [r2 c2]]
-  (if (= r1 r2)
-    (if (< c1 c2)
-      (remove-east-wall-from-canvas ctx [r1 c1])
-      (remove-east-wall-from-canvas ctx [r2 c2]))
-    (if (< r1 r2)
-      (remove-south-wall-from-canvas ctx [r1 c1])
-      (remove-south-wall-from-canvas ctx [r2 c2]))))
-
-(defn random-prim
-  [dom-canvas nrows ncols]
-  (let [h (+ (* nrows cell-size) wall-thickness)
-        w (+ (* ncols cell-size) wall-thickness)]
-    (set! (.-width dom-canvas) (+ (* 2 margin) w))
-    (set! (.-height dom-canvas) (+ (* 2 margin) h))
-    (let [ctx (canvas/get-context dom-canvas "2d")]
-      (canvas/fill-style ctx "#000000")
-      (canvas/fill-rect ctx {:x margin :y margin :h h :w w})
-      (canvas/fill-style ctx "#FFFFFF")
-      (let [starting-cell [(rand-int nrows) (rand-int ncols)]]
-        (add-cell-to-canvas ctx starting-cell)
-        (go
-         (loop [cells #{starting-cell} walls (into #{} (cell-walls nrows ncols starting-cell))]
-           (<! (timeout 1))
-           (when (not-empty walls)
-             (let [wall          (rand-nth (vec walls))
-                   [cell1 cell2] (vec wall)]
-                (if (and (cells cell1) (cells cell2))
-                  (recur cells (disj walls wall))
-                  (let [[cell new-cell] (if (cells cell1) [cell1 cell2] [cell2 cell1])]
-                      (add-cell-to-canvas ctx new-cell)
-                      (remove-wall-from-canvas ctx cell new-cell)
-                      (recur (conj cells new-cell)
-                             (into (disj walls wall) (cell-walls nrows ncols new-cell))))))))))
-      ctx)))
-
-(def dom-canvas (.getElementById js/document "maze-canvas"))
-
-(def ctx (random-prim dom-canvas 40 40))
-
-
+(om/root
+ placeholder
+ app-state
+ {:target (. js/document (getElementById "app"))})
